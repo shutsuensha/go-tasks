@@ -9,11 +9,14 @@ SELECT * FROM tasks WHERE id = $1;
 -- name: ListTasks :many
 SELECT * FROM tasks ORDER BY id DESC;
 
--- name: UpdateTaskStatus :one
-UPDATE tasks
-SET done = $2
-WHERE id = $1
-RETURNING *;
+-- name: ListTasksPaginated :many
+SELECT *
+FROM tasks
+ORDER BY id DESC
+LIMIT $1
+OFFSET $2;
 
--- name: DeleteTask :exec
-DELETE FROM tasks WHERE id = $1;
+-- name: CreateTaskEvent :one
+INSERT INTO task_events (task_id, event_type)
+VALUES ($1, $2)
+RETURNING *;

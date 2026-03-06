@@ -16,8 +16,13 @@ import (
 	"github.com/shutsuensha/go-tasks/internal/db"
 	"github.com/shutsuensha/go-tasks/internal/handler"
 	"github.com/shutsuensha/go-tasks/internal/middleware"
+	"github.com/shutsuensha/go-tasks/internal/service"
+	"github.com/shutsuensha/go-tasks/internal/cache"
+	"github.com/shutsuensha/go-tasks/internal/metrics"
 
 	"go.uber.org/zap"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -42,17 +47,29 @@ func main() {
 	}
 	defer pool.Close()
 
+	metrics.StartDBCollector(pool)
+
 	if err := pool.Ping(ctx); err != nil {
 		log.Fatal("db not reachable:", err)
 	}
 
 	queries := db.New(pool)
 
+	rdb := cache.NewRedisClient(cfg)
+
+	taskService := service.NewTaskService(pool, queries, rdb)
+
+	rateLimiter := middleware.NewRateLimiter(10, 20)
+
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logging(logger))
 	r.Use(middleware.Recovery(logger))
+	r.Use(middleware.Metrics)
+	r.Use(rateLimiter.Middleware)
+
+	r.Handle("/metrics", promhttp.Handler())
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -69,7 +86,8 @@ func main() {
 		w.Write([]byte("ready"))
 	})
 
-	taskHandler := handler.NewTaskHandler(queries)
+	taskHandler := handler.NewTaskHandler(taskService)
+
 	taskHandler.Register(r)
 
 	server := &http.Server{

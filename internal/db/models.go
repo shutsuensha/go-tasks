@@ -15,3 +15,10 @@ type Task struct {
 	Done        bool
 	CreatedAt   pgtype.Timestamp
 }
+
+type TaskEvent struct {
+	ID        int32
+	TaskID    int32
+	EventType string
+	CreatedAt pgtype.Timestamp
+}

@@ -33,13 +33,27 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 	return i, err
 }
 
-const deleteTask = `-- name: DeleteTask :exec
-DELETE FROM tasks WHERE id = $1
+const createTaskEvent = `-- name: CreateTaskEvent :one
+INSERT INTO task_events (task_id, event_type)
+VALUES ($1, $2)
+RETURNING id, task_id, event_type, created_at
 `
 
-func (q *Queries) DeleteTask(ctx context.Context, id int32) error {
-	_, err := q.db.Exec(ctx, deleteTask, id)
-	return err
+type CreateTaskEventParams struct {
+	TaskID    int32
+	EventType string
+}
+
+func (q *Queries) CreateTaskEvent(ctx context.Context, arg CreateTaskEventParams) (TaskEvent, error) {
+	row := q.db.QueryRow(ctx, createTaskEvent, arg.TaskID, arg.EventType)
+	var i TaskEvent
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.EventType,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getTask = `-- name: GetTask :one
@@ -89,27 +103,41 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 	return items, nil
 }
 
-const updateTaskStatus = `-- name: UpdateTaskStatus :one
-UPDATE tasks
-SET done = $2
-WHERE id = $1
-RETURNING id, title, description, done, created_at
+const listTasksPaginated = `-- name: ListTasksPaginated :many
+SELECT id, title, description, done, created_at
+FROM tasks
+ORDER BY id DESC
+LIMIT $1
+OFFSET $2
 `
 
-type UpdateTaskStatusParams struct {
-	ID   int32
-	Done bool
+type ListTasksPaginatedParams struct {
+	Limit  int32
+	Offset int32
 }
 
-func (q *Queries) UpdateTaskStatus(ctx context.Context, arg UpdateTaskStatusParams) (Task, error) {
-	row := q.db.QueryRow(ctx, updateTaskStatus, arg.ID, arg.Done)
-	var i Task
-	err := row.Scan(
-		&i.ID,
-		&i.Title,
-		&i.Description,
-		&i.Done,
-		&i.CreatedAt,
-	)
-	return i, err
+func (q *Queries) ListTasksPaginated(ctx context.Context, arg ListTasksPaginatedParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listTasksPaginated, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Done,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

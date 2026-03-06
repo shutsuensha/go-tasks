@@ -1,4 +1,5 @@
 APP_NAME=app
+DB_URL=postgres://postgres:postgres@localhost:3333/tasks_db?sslmode=disable
 
 build:
 	go build -o $(APP_NAME) cmd/app/main.go
@@ -29,3 +30,6 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+database:
+	PGPASSWORD=postgres psql -h localhost -p 3333 -U postgres -d tasks_db
