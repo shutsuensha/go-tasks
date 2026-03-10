@@ -61,7 +61,7 @@ func (s *TaskService) CreateTask(
 	if err != nil {
 		return db.Task{}, err
 	}
-
+	
 	_, err = qtx.CreateTaskEvent(ctx, db.CreateTaskEventParams{
 		TaskID:    task.ID,
 		EventType: "task_created",
@@ -73,9 +73,11 @@ func (s *TaskService) CreateTask(
 	if err := tx.Commit(ctx); err != nil {
 		return db.Task{}, err
 	}
-
-	if err := s.queue.EnqueueTaskCreated(task.ID); err != nil {
-		return db.Task{}, err
+	
+	if s.queue != nil {
+		if err := s.queue.EnqueueTaskCreated(task.ID); err != nil {
+			return db.Task{}, err
+		}
 	}
 
 	return task, nil
