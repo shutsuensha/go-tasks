@@ -3,77 +3,30 @@ package middleware
 import (
 	"net"
 	"net/http"
-	"sync"
+	"strconv"
 	"time"
 
-	"golang.org/x/time/rate"
+	"github.com/redis/go-redis/v9"
 )
 
-type client struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
+type RedisRateLimiter struct {
+	rdb    *redis.Client
+	limit  int
+	window time.Duration
 }
 
-type RateLimiter struct {
-	mu      sync.Mutex
-	clients map[string]*client
-
-	r rate.Limit
-	b int
-}
-
-func NewRateLimiter(r rate.Limit, b int) *RateLimiter {
-	rl := &RateLimiter{
-		clients: make(map[string]*client),
-		r:       r,
-		b:       b,
-	}
-
-	go rl.cleanup()
-
-	return rl
-}
-
-func (rl *RateLimiter) getClient(ip string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	c, exists := rl.clients[ip]
-
-	if !exists {
-		limiter := rate.NewLimiter(rl.r, rl.b)
-
-		rl.clients[ip] = &client{
-			limiter:  limiter,
-			lastSeen: time.Now(),
-		}
-
-		return limiter
-	}
-
-	c.lastSeen = time.Now()
-
-	return c.limiter
-}
-
-func (rl *RateLimiter) cleanup() {
-	for {
-		time.Sleep(time.Minute)
-
-		rl.mu.Lock()
-
-		for ip, c := range rl.clients {
-			if time.Since(c.lastSeen) > 3*time.Minute {
-				delete(rl.clients, ip)
-			}
-		}
-
-		rl.mu.Unlock()
+func NewRedisRateLimiter(rdb *redis.Client, limit int, window time.Duration) *RedisRateLimiter {
+	return &RedisRateLimiter{
+		rdb:    rdb,
+		limit:  limit,
+		window: window,
 	}
 }
 
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+func (rl *RedisRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		ctx := r.Context()
 
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -81,9 +34,20 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		limiter := rl.getClient(ip)
+		key := "rate:" + ip
 
-		if !limiter.Allow() {
+		count, err := rl.rdb.Incr(ctx, key).Result()
+		if err != nil {
+			http.Error(w, "redis error", http.StatusInternalServerError)
+			return
+		}
+
+		if count == 1 {
+			rl.rdb.Expire(ctx, key, rl.window)
+		}
+
+		if count > int64(rl.limit) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(rl.window.Seconds())))
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}

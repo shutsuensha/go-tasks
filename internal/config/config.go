@@ -8,7 +8,7 @@ import (
 type Config struct {
 	HTTPPort string
 	DBUrl    string
-	RedisURL  string
+	RedisAddr string
 }
 
 func Load() (*Config, error) {
@@ -20,7 +20,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		HTTPPort: viper.GetString("HTTP_PORT"),
 		DBUrl:    viper.GetString("DB_URL"),
-		RedisURL : viper.GetString("REDIS_URL"),
+		RedisAddr : viper.GetString("REDIS_ADDR"),
 	}
 
 	if cfg.HTTPPort == "" {

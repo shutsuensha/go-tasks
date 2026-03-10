@@ -8,22 +8,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shutsuensha/go-tasks/internal/db"
 	"github.com/shutsuensha/go-tasks/internal/metrics"
+	"github.com/shutsuensha/go-tasks/internal/queue"
 	"github.com/redis/go-redis/v9"
 	
 	"fmt"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type TaskService struct {
-	pool *pgxpool.Pool
-	q    *db.Queries
-	rdb  *redis.Client
+	pool  *pgxpool.Pool
+	q     *db.Queries
+	rdb   *redis.Client
+	sf    singleflight.Group
+	queue *queue.Client
 }
 
-func NewTaskService(pool *pgxpool.Pool, q *db.Queries, rdb *redis.Client) *TaskService {
+func NewTaskService(
+	pool *pgxpool.Pool,
+	q *db.Queries,
+	rdb *redis.Client,
+	queue *queue.Client,
+) *TaskService {
+
 	return &TaskService{
-		pool: pool,
-		q:    q,
-		rdb:  rdb,
+		pool:  pool,
+		q:     q,
+		rdb:   rdb,
+		queue: queue,
 	}
 }
 
@@ -62,6 +74,10 @@ func (s *TaskService) CreateTask(
 		return db.Task{}, err
 	}
 
+	if err := s.queue.EnqueueTaskCreated(task.ID); err != nil {
+		return db.Task{}, err
+	}
+
 	return task, nil
 }
 
@@ -89,26 +105,34 @@ func (s *TaskService) ListTasks(
 
 	metrics.RedisCacheMisses.Inc()
 
-	startDB := time.Now()
+	v, err, _ := s.sf.Do(key, func() (interface{}, error) {
 
-	tasks, err := s.q.ListTasksPaginated(ctx, db.ListTasksPaginatedParams{
-		Limit:  limit,
-		Offset: offset,
+		startDB := time.Now()
+
+		tasks, err := s.q.ListTasksPaginated(ctx, db.ListTasksPaginatedParams{
+			Limit:  limit,
+			Offset: offset,
+		})
+
+		metrics.ObserveQuery("list_tasks_paginated", startDB)
+
+		if err != nil {
+			return nil, err
+		}
+
+		data, err := json.Marshal(tasks)
+		if err == nil {
+			s.rdb.Set(ctx, key, data, time.Minute)
+		}
+
+		return tasks, nil
 	})
-
-	metrics.ObserveQuery("list_tasks_paginated", startDB)
 
 	if err != nil {
 		return nil, err
 	}
 
-	data, _ := json.Marshal(tasks)
-
-	startSet := time.Now()
-	s.rdb.Set(ctx, key, data, time.Minute)
-	metrics.ObserveRedisOperation("set", startSet)
-
-	return tasks, nil
+	return v.([]db.Task), nil
 }
 
 func (s *TaskService) GetTask(

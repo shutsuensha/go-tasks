@@ -10,19 +10,25 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/shutsuensha/go-tasks/internal/cache"
 	"github.com/shutsuensha/go-tasks/internal/config"
 	"github.com/shutsuensha/go-tasks/internal/db"
 	"github.com/shutsuensha/go-tasks/internal/handler"
-	"github.com/shutsuensha/go-tasks/internal/middleware"
-	"github.com/shutsuensha/go-tasks/internal/service"
-	"github.com/shutsuensha/go-tasks/internal/cache"
 	"github.com/shutsuensha/go-tasks/internal/metrics"
-
-	"go.uber.org/zap"
+	"github.com/shutsuensha/go-tasks/internal/middleware"
+	"github.com/shutsuensha/go-tasks/internal/observability"
+	"github.com/shutsuensha/go-tasks/internal/queue"
+	"github.com/shutsuensha/go-tasks/internal/service"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.uber.org/zap"
+
+	"net/http/pprof"
+
+	"github.com/exaring/otelpgx"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -33,19 +39,34 @@ func main() {
 	}
 	defer logger.Sync()
 
-
 	ctx := context.Background()
+
+	shutdownTracing, err := observability.InitTracing(ctx, "go-tasks-api")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer shutdownTracing(ctx)
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
+	
+	
 
-	pool, err := pgxpool.New(ctx, cfg.DBUrl)
+	pgCfg, err := pgxpool.ParseConfig(cfg.DBUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer pool.Close()
+
+	pgCfg.ConnConfig.Tracer = otelpgx.NewTracer()
+
+	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+
 
 	metrics.StartDBCollector(pool)
 
@@ -57,9 +78,11 @@ func main() {
 
 	rdb := cache.NewRedisClient(cfg)
 
-	taskService := service.NewTaskService(pool, queries, rdb)
+	rateLimiter := middleware.NewRedisRateLimiter(rdb, 10, time.Second)
 
-	rateLimiter := middleware.NewRateLimiter(10, 20)
+	queueClient := queue.NewClient(cfg.RedisAddr)
+
+	taskService := service.NewTaskService(pool, queries, rdb, queueClient)
 
 	r := chi.NewRouter()
 
@@ -68,6 +91,22 @@ func main() {
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Metrics)
 	r.Use(rateLimiter.Middleware)
+
+	r.Route("/debug/pprof", func(r chi.Router) {
+		r.Get("/", pprof.Index)
+		r.Get("/cmdline", pprof.Cmdline)
+		r.Get("/profile", pprof.Profile)
+		r.Get("/symbol", pprof.Symbol)
+		r.Post("/symbol", pprof.Symbol)
+		r.Get("/trace", pprof.Trace)
+
+		r.Get("/allocs", pprof.Handler("allocs").ServeHTTP)
+		r.Get("/block", pprof.Handler("block").ServeHTTP)
+		r.Get("/goroutine", pprof.Handler("goroutine").ServeHTTP)
+		r.Get("/heap", pprof.Handler("heap").ServeHTTP)
+		r.Get("/mutex", pprof.Handler("mutex").ServeHTTP)
+		r.Get("/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+	})
 
 	r.Handle("/metrics", promhttp.Handler())
 
@@ -87,19 +126,20 @@ func main() {
 	})
 
 	taskHandler := handler.NewTaskHandler(taskService)
-
 	taskHandler.Register(r)
 
 	server := &http.Server{
-		Addr:              ":" + cfg.HTTPPort,
-		Handler:           r,
+		Addr: ":" + cfg.HTTPPort,
+		Handler: otelhttp.NewHandler(
+			r,
+			"http-server",
+		),
 		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 
-	// запуск сервера
 	go func() {
 		log.Println("server started on :" + cfg.HTTPPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -107,7 +147,6 @@ func main() {
 		}
 	}()
 
-	// graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop

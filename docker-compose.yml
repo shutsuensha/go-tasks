@@ -22,7 +22,7 @@ services:
     environment:
       HTTP_PORT: 8080
       DB_URL: postgres://postgres:postgres@postgres:5432/tasks_db?sslmode=disable
-      REDIS_URL: redis://redis:6379
+      REDIS_ADDR: redis:6379  
     ports:
       - "8080:8080"
 
@@ -32,23 +32,32 @@ services:
     ports:
       - "7744:6379"
 
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: go_tasks_prometheus
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
-    depends_on:
-      - backend
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: go_tasks_prometheus
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  #   ports:
+  #     - "9090:9090"
+  #   depends_on:
+  #     - backend
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: go_tasks_grafana
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: go_tasks_grafana
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: go_tasks_jaeger
+    restart: always
     ports:
-      - "3000:3000"
-    depends_on:
-      - prometheus
+      - "16686:16686"   # UI
+      - "4318:4318"     # OTLP HTTP (OpenTelemetry)
+      - "4317:4317"     # OTLP gRPC (optional)
 
 volumes:
   pgdata:
