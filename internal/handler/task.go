@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/shutsuensha/go-tasks/internal/service"
+	"github.com/shutsuensha/go-tasks/internal/handler/dto"
+	"github.com/shutsuensha/go-tasks/internal/validator"
 )
 
 type TaskHandler struct {
@@ -27,12 +29,14 @@ func (h *TaskHandler) Register(r chi.Router) {
 
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 
-	var req struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-	}
+	var req dto.CreateTaskRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := validator.Validate.Struct(req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -46,6 +50,8 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	w.WriteHeader(http.StatusCreated)
 
 	if err := json.NewEncoder(w).Encode(task); err != nil {
 		return

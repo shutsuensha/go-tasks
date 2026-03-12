@@ -20,6 +20,7 @@ import (
 	"github.com/shutsuensha/go-tasks/internal/observability"
 	"github.com/shutsuensha/go-tasks/internal/queue"
 	"github.com/shutsuensha/go-tasks/internal/service"
+	"github.com/shutsuensha/go-tasks/internal/validator"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -52,6 +53,8 @@ func main() {
 		log.Fatal(err)
 	}
 	
+
+	validator.Init()
 	
 
 	pgCfg, err := pgxpool.ParseConfig(cfg.DBUrl)
