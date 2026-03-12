@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/shutsuensha/go-tasks/internal/service"
 	"github.com/shutsuensha/go-tasks/internal/handler/dto"
+	"github.com/shutsuensha/go-tasks/internal/service"
 	"github.com/shutsuensha/go-tasks/internal/validator"
 )
 
@@ -27,6 +27,17 @@ func (h *TaskHandler) Register(r chi.Router) {
 	r.Get("/tasks/{id}", h.Get)
 }
 
+// CreateTask godoc
+// @Summary Create task
+// @Description create a new task
+// @Tags tasks
+// @Accept json
+// @Produce json
+// @Param task body dto.CreateTaskRequest true "Task data"
+// @Success 201 {object} dto.TaskResponse
+// @Failure 400 {string} string
+// @Failure 500 {string} string
+// @Router /tasks [post]
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req dto.CreateTaskRequest
@@ -51,13 +62,21 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	resp := dto.ToTaskResponse(task)
 
-	if err := json.NewEncoder(w).Encode(task); err != nil {
-		return
-	}
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
 }
 
+// ListTasks godoc
+// @Summary List tasks
+// @Description get tasks with pagination
+// @Tags tasks
+// @Produce json
+// @Param limit query int false "limit"
+// @Param offset query int false "offset"
+// @Success 200 {array} dto.TaskResponse
+// @Router /tasks [get]
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	limitStr := r.URL.Query().Get("limit")
@@ -90,11 +109,20 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(tasks); err != nil {
-		return
-	}
+	resp := dto.ToTaskResponses(tasks)
+
+	json.NewEncoder(w).Encode(resp)
 }
 
+// GetTask godoc
+// @Summary Get task
+// @Description get task by id
+// @Tags tasks
+// @Produce json
+// @Param id path int true "Task ID"
+// @Success 200 {object} dto.TaskResponse
+// @Failure 404 {string} string
+// @Router /tasks/{id} [get]
 func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	idStr := chi.URLParam(r, "id")
@@ -111,7 +139,7 @@ func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(task); err != nil {
-		return
-	}
+	resp := dto.ToTaskResponse(task)
+
+	json.NewEncoder(w).Encode(resp)
 }

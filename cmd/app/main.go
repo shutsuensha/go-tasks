@@ -1,3 +1,7 @@
+// @title Go Tasks API
+// @version 1.0
+// @description Task service example
+// @BasePath /
 package main
 
 import (
@@ -30,6 +34,10 @@ import (
 
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+
+	httpSwagger "github.com/swaggo/http-swagger"
+	_ "github.com/shutsuensha/go-tasks/docs"
 )
 
 func main() {
@@ -112,6 +120,9 @@ func main() {
 	})
 
 	r.Handle("/metrics", promhttp.Handler())
+
+
+	r.Get("/swagger/*", httpSwagger.WrapHandler)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
